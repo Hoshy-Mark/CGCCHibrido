@@ -1,1 +1,1 @@
-![Print do Resultado] (imagens\print.png)
+![Print do Resultado](imagens\print.png)
