@@ -1,91 +1,98 @@
-/* Hello Triangle - código adaptado de https://learnopengl.com/#!Getting-started/Hello-Triangle
- *
- * Adaptado por Rossana Baptista Queiroz
- * para a disciplina de Processamento Gráfico - Unisinos
- * Versão inicial: 7/4/2017
- * Última atualização em 13/08/2024
- *
+/* Hello Textured OBJ Viewer
+ * Versão com instâncias e interação por teclado
+ * Adaptado por ChatGPT (junho/2025)
  */
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
 #include <string>
-#include <assert.h>
 
-using namespace std;
-
-// GLAD
 #include <glad/glad.h>
-
-// GLFW
 #include <GLFW/glfw3.h>
-
-// GLM
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+using namespace std;
 using namespace glm;
 
-#include <cmath>
+// --- Variáveis globais ---
+const GLuint WIDTH = 800, HEIGHT = 600;
+GLFWwindow *window;
 
-// Protótipo da função de callback de teclado
-// Protótipo da função de callback de teclado
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
+vector<vec3> positions;
+vector<vec2> texCoords;
 
-// Protótipos das funções
-int setupShader();
-GLuint setupGeometry();
+GLuint textureID;
 
-void drawCube(GLuint shaderID, GLuint VAO, vec3 position, vec3 scaleVec, float angle, vec3 axis = vec3(0.0, 0.0, 1.0));
-
-vec3 cubePosition = vec3(400.0f, 300.0f, 0.0f);
-vec3 cubeScale = vec3(100.0f, 100.0f, 100.0f); // agora escala 3D
+// Variáveis para interação
+vec3 cubePosition = vec3(0.0f, 0.0f, -5.0f);
+vec3 cubeScale = vec3(1.0f);
 float cubeRotationX = 0.0f;
 float cubeRotationY = 0.0f;
 float cubeRotationZ = 0.0f;
 
-// Dimensões da janela
-const GLuint WIDTH = 800, HEIGHT = 600;
-
-// Vertex Shader (GLSL) com atributo de cor
-const GLchar *vertexShaderSource = R"(
+// --- Vertex Shader ---
+const char *vertexShaderSource = R"(
 #version 400 core
-layout (location = 0) in vec3 position;
-layout (location = 1) in vec3 color;
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec2 aTexCoord;
 
-out vec3 vertexColor;
+out vec2 TexCoord;
 
 uniform mat4 projection;
 uniform mat4 model;
 
 void main()
 {
-    gl_Position = projection * model * vec4(position, 1.0);
-    vertexColor = color;
+    gl_Position = projection * model * vec4(aPos, 1.0);
+    TexCoord = aTexCoord;
 }
 )";
 
-// Fragment Shader (GLSL) recebe cor interpolada
-const GLchar *fragmentShaderSource = R"(
+// --- Fragment Shader ---
+const char *fragmentShaderSource = R"(
 #version 400 core
-in vec3 vertexColor;
+in vec2 TexCoord;
 out vec4 FragColor;
+
+uniform sampler2D texture1;
 
 void main()
 {
-    FragColor = vec4(vertexColor, 1.0);
+    FragColor = texture(texture1, TexCoord);
 }
 )";
-// Função MAIN
+
+// --- Funções ---
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
+GLuint setupShader();
+GLuint setupGeometry();
+bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut);
+GLuint loadTexture(const string &filePath);
+void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scale, vec3 rotation);
+
 int main()
 {
-    // Inicialização da GLFW
-    glfwInit();
+    std::string objPath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/Modelos3D/Cube.obj";
+    std::string mtlPath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/Modelos3D/Cube.mtl";
+    std::string texturePath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/pixelWall.png";
 
-    GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Cubo Colorido por Vértice", nullptr, nullptr);
+    std::string textureFile;
+
+    // Inicialização GLFW
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    window = glfwCreateWindow(WIDTH, HEIGHT, "OBJ Viewer with Texture + Interação", nullptr, nullptr);
     glfwMakeContextCurrent(window);
     glfwSetKeyCallback(window, key_callback);
 
@@ -95,98 +102,73 @@ int main()
         return -1;
     }
 
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-    glViewport(0, 0, width, height);
+    glViewport(0, 0, WIDTH, HEIGHT);
+    glEnable(GL_DEPTH_TEST);
 
-    GLuint shaderID = setupShader();
+    GLuint shaderProgram = setupShader();
+
+    // --- Carregar OBJ e MTL ---
+    if (!loadOBJ(objPath, mtlPath, textureFile))
+    {
+        cout << "Erro ao carregar Cube.obj" << endl;
+        return -1;
+    }
+
+    // --- Carregar textura ---
+    textureID = loadTexture(texturePath);
+    if (textureID == 0)
+    {
+        cout << "Erro ao carregar textura: " << texturePath << endl;
+        return -1;
+    }
+
     GLuint VAO = setupGeometry();
 
-    glUseProgram(shaderID);
+    // Matriz de projeção perspectiva
+    mat4 projection = perspective(radians(45.0f), (float)WIDTH / (float)HEIGHT, 0.1f, 100.0f);
 
-    // Matriz de projeção ortográfica 3D
-    mat4 projection = ortho(0.0f, 800.0f, 0.0f, 600.0f, -500.0f, 500.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shaderID, "projection"), 1, GL_FALSE, value_ptr(projection));
-
+    // Loop principal
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
 
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
 
-        drawCube(shaderID, VAO, cubePosition, cubeScale, 0.0f);
+        glUseProgram(shaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
 
-        // Exemplo: desenha outras instâncias
-        drawCube(shaderID, VAO, cubePosition + vec3(200.0f, 0.0f, 0.0f), cubeScale * 0.5f, 0.0f);
-        drawCube(shaderID, VAO, cubePosition + vec3(-200.0f, -100.0f, 0.0f), cubeScale * 0.75f, 0.0f);
+        // Bind texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
 
-        glfwSwapBuffers(window);
+        // --- Desenhar cubo principal ---
+        vec3 baseRotation = vec3(cubeRotationX, cubeRotationY, cubeRotationZ);
+		vec3 baseScale    = cubeScale;
+		vec3 basePosition = cubePosition;
+
+		// Primeiro cubo (central)
+		drawCube(shaderProgram, VAO, basePosition + vec3(0.0f, 0.0f, 0.0f), baseScale, baseRotation);
+
+		// Segundo cubo (deslocado para a direita)
+		drawCube(shaderProgram, VAO, basePosition + vec3(4.0f, 0.0f, 0.0f), baseScale, baseRotation);
+
+		// Terceiro cubo (deslocado para a esquerda)
+		drawCube(shaderProgram, VAO, basePosition + vec3(-4.0f, 0.0f, 0.0f), baseScale, baseRotation);
+		
+		glfwSwapBuffers(window);
     }
 
-    glDeleteVertexArrays(1, &VAO);
     glfwTerminate();
     return 0;
 }
 
-// Função de callback de teclado - só pode ter uma instância (deve ser estática se
-// estiver dentro de uma classe) - É chamada sempre que uma tecla for pressionada
-// ou solta via GLFW
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
-{
-    const float moveSpeed = 10.0f;
-    const float scaleSpeed = 0.05f;
-    const float rotationSpeed = 5.0f;
-
-    if (action == GLFW_PRESS || action == GLFW_REPEAT)
-    {
-        // Fechar com ESC
-        if (key == GLFW_KEY_ESCAPE)
-            glfwSetWindowShouldClose(window, GL_TRUE);
-
-        // Movimento no eixo X e Z
-        if (key == GLFW_KEY_W)
-            cubePosition.y += moveSpeed;
-        if (key == GLFW_KEY_S)
-            cubePosition.y -= moveSpeed;
-        if (key == GLFW_KEY_A)
-            cubePosition.x -= moveSpeed;
-        if (key == GLFW_KEY_D)
-            cubePosition.x += moveSpeed;
-
-        // Movimento no eixo Y
-        if (key == GLFW_KEY_I)
-            cubePosition.z += moveSpeed;
-        if (key == GLFW_KEY_J)
-            cubePosition.z -= moveSpeed;
-
-        // Escala
-        if (key == GLFW_KEY_LEFT_BRACKET) // [
-            cubeScale *= (1.0f - scaleSpeed);
-        if (key == GLFW_KEY_RIGHT_BRACKET) // ]
-            cubeScale *= (1.0f + scaleSpeed);
-
-        // Rotação
-        if (key == GLFW_KEY_X)
-            cubeRotationX += rotationSpeed;
-        if (key == GLFW_KEY_Y)
-            cubeRotationY += rotationSpeed;
-        if (key == GLFW_KEY_Z)
-            cubeRotationZ += rotationSpeed;
-    }
-}
-
-
-// Esta função está basntante hardcoded - objetivo é compilar e "buildar" um programa de
-//  shader simples e único neste exemplo de código
-//  O código fonte do vertex e fragment shader está nos arrays vertexShaderSource e
-//  fragmentShader source no iniçio deste arquivo
-//  A função retorna o identificador do programa de shader
-int setupShader()
+// --- Shader ---
+GLuint setupShader()
 {
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
     glCompileShader(vertexShader);
 
     GLint success;
@@ -194,20 +176,18 @@ int setupShader()
     glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
     if (!success)
     {
-        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-        cout << "ERROR::VERTEX_SHADER_COMPILATION_FAILED\n"
-             << infoLog << endl;
+        glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
+        cout << "Vertex Shader Error:\n" << infoLog << endl;
     }
 
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
     glCompileShader(fragmentShader);
     glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
     if (!success)
     {
-        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-        cout << "ERROR::FRAGMENT_SHADER_COMPILATION_FAILED\n"
-             << infoLog << endl;
+        glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
+        cout << "Fragment Shader Error:\n" << infoLog << endl;
     }
 
     GLuint shaderProgram = glCreateProgram();
@@ -217,9 +197,8 @@ int setupShader()
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
     if (!success)
     {
-        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-        cout << "ERROR::SHADER_PROGRAM_LINKING_FAILED\n"
-             << infoLog << endl;
+        glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
+        cout << "Shader Linking Error:\n" << infoLog << endl;
     }
 
     glDeleteShader(vertexShader);
@@ -228,131 +207,207 @@ int setupShader()
     return shaderProgram;
 }
 
-// Carrega uma textura de arquivo e retorna o id da textura na GPU, além de retornar a largura e altura da imagem carregada
-GLuint loadTexture(string filePath, int &width, int &height)
-{
-	int nrChannels;
-	unsigned char *data = stbi_load(filePath.c_str(), &width, &height, &nrChannels, 0);
-	if (!data)
-	{
-		cout << "Falha ao carregar textura: " << filePath << endl;
-		return 0;
-	}
-	GLuint textureID;
-	glGenTextures(1, &textureID);
-	glBindTexture(GL_TEXTURE_2D, textureID);
-	// Configurações de filtro de textura
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // S = eixo x da textura
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT); // T = eixo y da textura
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	// Determina o formato da textura de acordo com o número de canais da imagem
-	GLenum format;
-	if (nrChannels == 1)
-		format = GL_RED;
-	else if (nrChannels == 3)
-		format = GL_RGB;
-	else if (nrChannels == 4)
-		format = GL_RGBA;
-	else
-		format = GL_RGB;
-	// Carrega os dados da imagem na textura da GPU
-	glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-	glGenerateMipmap(GL_TEXTURE_2D);
-	stbi_image_free(data);
-	return textureID;
-}
-
-// Esta função agora se chama drawCube, pois o que ela desenha é um cubo texturizado
-// Para simplicidade, o parâmetro 'color' não está sendo usado (você pode implementá-lo para colorir o cubo)
-// A função usa as rotações globais cubeRotationX, cubeRotationY e cubeRotationZ para aplicar rotação no cubo
-void drawCube(GLuint shaderID, GLuint VAO, vec3 position, vec3 scaleVec, float angle, vec3 axis)
-{
-    glUseProgram(shaderID);
-
-    mat4 model = mat4(1.0f);
-
-    // Translação, escala e rotação
-    model = translate(model, position);
-    model = rotate(model, radians(cubeRotationX), vec3(1.0f, 0.0f, 0.0f));
-    model = rotate(model, radians(cubeRotationY), vec3(0.0f, 1.0f, 0.0f));
-    model = rotate(model, radians(cubeRotationZ), vec3(0.0f, 0.0f, 1.0f));
-    model = scale(model, scaleVec);
-
-    GLuint modelLoc = glGetUniformLocation(shaderID, "model");
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, value_ptr(model));
-
-    glBindVertexArray(VAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    glBindVertexArray(0);
-}
-
-// Setup da geometria do cubo: cria VAO e VBO com os dados de posição e coordenadas de textura
+// --- Setup Geometry ---
 GLuint setupGeometry()
 {
-    GLfloat vertices[] = {
-        // Positions          // Colors (RGB)
-        -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f, // vermelho
-         0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 0.0f, // verde
-         0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f, // azul
-         0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
-        -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f, // amarelo
-        -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-
-        -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f, // magenta
-         0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 1.0f, // ciano
-         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f, // branco
-         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,
-        -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // cinza
-        -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
-
-        -0.5f,  0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
-        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.5f,
-        -0.5f, -0.5f, -0.5f,  0.5f, 0.0f, 1.0f,
-        -0.5f, -0.5f, -0.5f,  0.5f, 0.0f, 1.0f,
-        -0.5f, -0.5f,  0.5f,  1.0f, 0.5f, 0.0f,
-        -0.5f,  0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
-
-         0.5f,  0.5f,  0.5f,  0.3f, 0.7f, 0.9f,
-         0.5f,  0.5f, -0.5f,  0.6f, 0.1f, 0.3f,
-         0.5f, -0.5f, -0.5f,  0.8f, 0.5f, 0.2f,
-         0.5f, -0.5f, -0.5f,  0.8f, 0.5f, 0.2f,
-         0.5f, -0.5f,  0.5f,  0.2f, 0.8f, 0.5f,
-         0.5f,  0.5f,  0.5f,  0.3f, 0.7f, 0.9f,
-
-        -0.5f, -0.5f, -0.5f,  0.9f, 0.2f, 0.3f,
-         0.5f, -0.5f, -0.5f,  0.1f, 0.9f, 0.3f,
-         0.5f, -0.5f,  0.5f,  0.3f, 0.9f, 0.1f,
-         0.5f, -0.5f,  0.5f,  0.3f, 0.9f, 0.1f,
-        -0.5f, -0.5f,  0.5f,  0.9f, 0.3f, 0.1f,
-        -0.5f, -0.5f, -0.5f,  0.9f, 0.2f, 0.3f,
-
-        -0.5f,  0.5f, -0.5f,  0.2f, 0.3f, 0.9f,
-         0.5f,  0.5f, -0.5f,  0.3f, 0.2f, 0.9f,
-         0.5f,  0.5f,  0.5f,  0.9f, 0.3f, 0.2f,
-         0.5f,  0.5f,  0.5f,  0.9f, 0.3f, 0.2f,
-        -0.5f,  0.5f,  0.5f,  0.2f, 0.9f, 0.3f,
-        -0.5f,  0.5f, -0.5f,  0.2f, 0.3f, 0.9f
-    };
-
     GLuint VAO, VBO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
 
+    struct Vertex
+    {
+        vec3 pos;
+        vec2 tex;
+    };
+
+    vector<Vertex> vertices;
+    for (size_t i = 0; i < positions.size(); i++)
+    {
+        Vertex v;
+        v.pos = positions[i];
+        v.tex = texCoords[i];
+        vertices.push_back(v);
+    }
+
     glBindVertexArray(VAO);
-
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
 
-    // posição
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)0);
     glEnableVertexAttribArray(0);
 
-    // cor
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid *)(3 * sizeof(GLfloat)));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)offsetof(Vertex, tex));
     glEnableVertexAttribArray(1);
 
     glBindVertexArray(0);
 
     return VAO;
+}
+
+// --- Load OBJ ---
+bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut)
+{
+    ifstream objFile(objPath);
+    if (!objFile.is_open())
+    {
+        cout << "Não foi possível abrir OBJ: " << objPath << endl;
+        return false;
+    }
+
+    vector<vec3> tempPositions;
+    vector<vec2> tempTexCoords;
+
+    string line;
+    while (getline(objFile, line))
+    {
+        istringstream iss(line);
+        string prefix;
+        iss >> prefix;
+
+        if (prefix == "v")
+        {
+            vec3 pos;
+            iss >> pos.x >> pos.y >> pos.z;
+            tempPositions.push_back(pos);
+        }
+        else if (prefix == "vt")
+        {
+            vec2 tex;
+            iss >> tex.x >> tex.y;
+            tex.y = 1.0f - tex.y; // Inverter eixo Y
+            tempTexCoords.push_back(tex);
+        }
+        else if (prefix == "f")
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                string v;
+                iss >> v;
+
+                size_t pos1 = v.find('/');
+                size_t pos2 = v.find('/', pos1 + 1);
+
+                int vi = stoi(v.substr(0, pos1)) - 1;
+                int ti = stoi(v.substr(pos1 + 1, pos2 - pos1 - 1)) - 1;
+
+                positions.push_back(tempPositions[vi]);
+                texCoords.push_back(tempTexCoords[ti]);
+            }
+        }
+    }
+
+    // --- Ler MTL ---
+    ifstream mtlFile(mtlPath);
+    if (!mtlFile.is_open())
+    {
+        cout << "Não foi possível abrir MTL: " << mtlPath << endl;
+        return false;
+    }
+
+    while (getline(mtlFile, line))
+    {
+        istringstream iss(line);
+        string prefix;
+        iss >> prefix;
+
+        if (prefix == "map_Kd")
+        {
+            string texFile;
+            iss >> texFile;
+
+            string mtlDir = mtlPath.substr(0, mtlPath.find_last_of("/\\"));
+            textureFileOut = mtlDir + "/" + texFile;
+            break;
+        }
+    }
+
+    cout << "OBJ carregado com " << positions.size() << " vértices.\n";
+    cout << "Textura: " << textureFileOut << endl;
+    return true;
+}
+
+// --- Load Texture ---
+GLuint loadTexture(const string &filePath)
+{
+    int width, height, nrChannels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char *data = stbi_load(filePath.c_str(), &width, &height, &nrChannels, 0);
+    if (!data)
+    {
+        cout << "Falha ao carregar imagem: " << filePath << endl;
+        return 0;
+    }
+
+    GLuint texID;
+    glGenTextures(1, &texID);
+    glBindTexture(GL_TEXTURE_2D, texID);
+
+    GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+    return texID;
+}
+
+// --- Função para desenhar cubo com model matrix ---
+void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scaleVec, vec3 rotation)
+{
+    mat4 model = translate(mat4(1.0f), position);
+    model = rotate(model, radians(rotation.x), vec3(1.0f, 0.0f, 0.0f));
+    model = rotate(model, radians(rotation.y), vec3(0.0f, 1.0f, 0.0f));
+    model = rotate(model, radians(rotation.z), vec3(0.0f, 0.0f, 1.0f));
+    model = glm::scale(model, scaleVec);  // aqui agora funciona!
+
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
+
+    glBindVertexArray(VAO);
+    glDrawArrays(GL_TRIANGLES, 0, positions.size());
+    glBindVertexArray(0);
+}
+
+// --- Teclado ---
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
+{
+    const float moveSpeed = 0.1f;
+    const float scaleSpeed = 0.05f;
+    const float rotationSpeed = 5.0f;
+
+    if (action == GLFW_PRESS || action == GLFW_REPEAT)
+    {
+        if (key == GLFW_KEY_ESCAPE)
+            glfwSetWindowShouldClose(window, true);
+
+        if (key == GLFW_KEY_W)
+            cubePosition.y += moveSpeed;
+        if (key == GLFW_KEY_S)
+            cubePosition.y -= moveSpeed;
+        if (key == GLFW_KEY_A)
+            cubePosition.x -= moveSpeed;
+        if (key == GLFW_KEY_D)
+            cubePosition.x += moveSpeed;
+
+        if (key == GLFW_KEY_I)
+            cubePosition.z += moveSpeed;
+        if (key == GLFW_KEY_J)
+            cubePosition.z -= moveSpeed;
+
+        if (key == GLFW_KEY_LEFT_BRACKET)
+            cubeScale *= (1.0f - scaleSpeed);
+        if (key == GLFW_KEY_RIGHT_BRACKET)
+            cubeScale *= (1.0f + scaleSpeed);
+
+        if (key == GLFW_KEY_X)
+            cubeRotationX += rotationSpeed;
+        if (key == GLFW_KEY_Y)
+            cubeRotationY += rotationSpeed;
+        if (key == GLFW_KEY_Z)
+            cubeRotationZ += rotationSpeed;
+    }
 }
