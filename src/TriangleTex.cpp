@@ -1,5 +1,5 @@
-/* Hello Textured OBJ Viewer
- * Versão com instâncias e interação por teclado
+/* Hello Textured OBJ Viewer com modelo Phong
+ * Versão com instâncias, interação por teclado e iluminação Phong
  * Adaptado por ChatGPT (junho/2025)
  */
 
@@ -38,13 +38,16 @@ float cubeRotationX = 0.0f;
 float cubeRotationY = 0.0f;
 float cubeRotationZ = 0.0f;
 
-// --- Vertex Shader ---
+// --- Vertex Shader (com Normais e iluminação Phong) ---
 const char *vertexShaderSource = R"(
 #version 400 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
+layout (location = 2) in vec3 aNormal;
 
 out vec2 TexCoord;
+out vec3 FragPos;
+out vec3 Normal;
 
 uniform mat4 projection;
 uniform mat4 model;
@@ -52,21 +55,50 @@ uniform mat4 model;
 void main()
 {
     gl_Position = projection * model * vec4(aPos, 1.0);
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * aNormal;
     TexCoord = aTexCoord;
 }
 )";
 
-// --- Fragment Shader ---
+// --- Fragment Shader com iluminação Phong + textura ---
 const char *fragmentShaderSource = R"(
 #version 400 core
 in vec2 TexCoord;
+in vec3 FragPos;
+in vec3 Normal;
+
 out vec4 FragColor;
 
 uniform sampler2D texture1;
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform vec3 lightColor;
+uniform vec3 objectColor;
 
 void main()
 {
-    FragColor = texture(texture1, TexCoord);
+    // propriedades do material
+    vec3 ambientColor = 0.2 * lightColor;
+    
+    // Difuso
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuseColor = diff * lightColor;
+
+    // Especular
+    float shininess = 32.0;
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    vec3 specularColor = spec * lightColor;
+
+    // Combinar componentes
+    vec3 phong = (ambientColor + diffuseColor + specularColor);
+
+    vec4 texColor = texture(texture1, TexCoord);
+    FragColor = vec4(phong, 1.0) * texColor;
 }
 )";
 
@@ -86,13 +118,12 @@ int main()
 
     std::string textureFile;
 
-    // Inicialização GLFW
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    window = glfwCreateWindow(WIDTH, HEIGHT, "OBJ Viewer with Texture + Interação", nullptr, nullptr);
+    window = glfwCreateWindow(WIDTH, HEIGHT, "OBJ Viewer with Phong Lighting", nullptr, nullptr);
     glfwMakeContextCurrent(window);
     glfwSetKeyCallback(window, key_callback);
 
@@ -107,14 +138,12 @@ int main()
 
     GLuint shaderProgram = setupShader();
 
-    // --- Carregar OBJ e MTL ---
     if (!loadOBJ(objPath, mtlPath, textureFile))
     {
         cout << "Erro ao carregar Cube.obj" << endl;
         return -1;
     }
 
-    // --- Carregar textura ---
     textureID = loadTexture(texturePath);
     if (textureID == 0)
     {
@@ -124,10 +153,12 @@ int main()
 
     GLuint VAO = setupGeometry();
 
-    // Matriz de projeção perspectiva
     mat4 projection = perspective(radians(45.0f), (float)WIDTH / (float)HEIGHT, 0.1f, 100.0f);
 
-    // Loop principal
+    vec3 lightPos = vec3(3.0f, 3.0f, 3.0f);
+    vec3 lightColor = vec3(1.0f);
+    vec3 objectColor = vec3(1.0f);
+
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -137,34 +168,30 @@ int main()
 
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, value_ptr(lightPos));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, value_ptr(vec3(0.0f, 0.0f, 0.0f)));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, value_ptr(lightColor));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, value_ptr(objectColor));
 
-        // Bind texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, textureID);
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
 
-        // --- Desenhar cubo principal ---
         vec3 baseRotation = vec3(cubeRotationX, cubeRotationY, cubeRotationZ);
-		vec3 baseScale    = cubeScale;
-		vec3 basePosition = cubePosition;
+        vec3 baseScale = cubeScale;
+        vec3 basePosition = cubePosition;
 
-		// Primeiro cubo (central)
-		drawCube(shaderProgram, VAO, basePosition + vec3(0.0f, 0.0f, 0.0f), baseScale, baseRotation);
+        drawCube(shaderProgram, VAO, basePosition + vec3(0.0f, 0.0f, 0.0f), baseScale, baseRotation);
+        drawCube(shaderProgram, VAO, basePosition + vec3(4.0f, 0.0f, 0.0f), baseScale, baseRotation);
+        drawCube(shaderProgram, VAO, basePosition + vec3(-4.0f, 0.0f, 0.0f), baseScale, baseRotation);
 
-		// Segundo cubo (deslocado para a direita)
-		drawCube(shaderProgram, VAO, basePosition + vec3(4.0f, 0.0f, 0.0f), baseScale, baseRotation);
-
-		// Terceiro cubo (deslocado para a esquerda)
-		drawCube(shaderProgram, VAO, basePosition + vec3(-4.0f, 0.0f, 0.0f), baseScale, baseRotation);
-		
-		glfwSwapBuffers(window);
+        glfwSwapBuffers(window);
     }
 
     glfwTerminate();
     return 0;
 }
 
-// --- Shader ---
 GLuint setupShader()
 {
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -207,7 +234,6 @@ GLuint setupShader()
     return shaderProgram;
 }
 
-// --- Setup Geometry ---
 GLuint setupGeometry()
 {
     GLuint VAO, VBO;
@@ -218,6 +244,7 @@ GLuint setupGeometry()
     {
         vec3 pos;
         vec2 tex;
+        vec3 normal;
     };
 
     vector<Vertex> vertices;
@@ -226,6 +253,7 @@ GLuint setupGeometry()
         Vertex v;
         v.pos = positions[i];
         v.tex = texCoords[i];
+        v.normal = vec3(0.0f, 0.0f, 1.0f); // normal default — (opcional: calcular normal real!)
         vertices.push_back(v);
     }
 
@@ -239,12 +267,14 @@ GLuint setupGeometry()
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)offsetof(Vertex, tex));
     glEnableVertexAttribArray(1);
 
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(2);
+
     glBindVertexArray(0);
 
     return VAO;
 }
 
-// --- Load OBJ ---
 bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut)
 {
     ifstream objFile(objPath);
@@ -274,7 +304,7 @@ bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOu
         {
             vec2 tex;
             iss >> tex.x >> tex.y;
-            tex.y = 1.0f - tex.y; // Inverter eixo Y
+            tex.y = 1.0f - tex.y;
             tempTexCoords.push_back(tex);
         }
         else if (prefix == "f")
@@ -296,7 +326,6 @@ bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOu
         }
     }
 
-    // --- Ler MTL ---
     ifstream mtlFile(mtlPath);
     if (!mtlFile.is_open())
     {
@@ -326,7 +355,6 @@ bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOu
     return true;
 }
 
-// --- Load Texture ---
 GLuint loadTexture(const string &filePath)
 {
     int width, height, nrChannels;
@@ -356,14 +384,13 @@ GLuint loadTexture(const string &filePath)
     return texID;
 }
 
-// --- Função para desenhar cubo com model matrix ---
 void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scaleVec, vec3 rotation)
 {
     mat4 model = translate(mat4(1.0f), position);
     model = rotate(model, radians(rotation.x), vec3(1.0f, 0.0f, 0.0f));
     model = rotate(model, radians(rotation.y), vec3(0.0f, 1.0f, 0.0f));
     model = rotate(model, radians(rotation.z), vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, scaleVec);  // aqui agora funciona!
+    model = glm::scale(model, scaleVec);
 
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
 
@@ -372,7 +399,6 @@ void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scaleVec, ve
     glBindVertexArray(0);
 }
 
-// --- Teclado ---
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
 {
     const float moveSpeed = 0.1f;
