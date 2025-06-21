@@ -32,146 +32,102 @@ using namespace glm;
 #include <cmath>
 
 // Protótipo da função de callback de teclado
+// Protótipo da função de callback de teclado
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
 
 // Protótipos das funções
 int setupShader();
-int setupGeometry();
-GLuint loadTexture(string filePath, int &width, int &height);
+GLuint setupGeometry();
 
-void drawTriangle(GLuint shaderID, GLuint VAO, vec3 position, vec3 dimensions, float angle, vec3 color, vec3 axis = (vec3(0.0, 0.0, 1.0)));
+void drawCube(GLuint shaderID, GLuint VAO, vec3 position, vec3 scaleVec, float angle, vec3 axis = vec3(0.0, 0.0, 1.0));
 
-// Dimensões da janela (pode ser alterado em tempo de execução)
+vec3 cubePosition = vec3(400.0f, 300.0f, 0.0f);
+vec3 cubeScale = vec3(100.0f, 100.0f, 100.0f); // agora escala 3D
+float cubeRotationX = 0.0f;
+float cubeRotationY = 0.0f;
+float cubeRotationZ = 0.0f;
+
+// Dimensões da janela
 const GLuint WIDTH = 800, HEIGHT = 600;
 
-// Código fonte do Vertex Shader (em GLSL): ainda hardcoded
+// Vertex Shader (GLSL) com atributo de cor
 const GLchar *vertexShaderSource = R"(
-#version 400
+#version 400 core
 layout (location = 0) in vec3 position;
-layout (location = 1) in vec2 texc;
+layout (location = 1) in vec3 color;
+
+out vec3 vertexColor;
+
 uniform mat4 projection;
 uniform mat4 model;
-out vec2 texCoord;
+
 void main()
 {
-   	gl_Position = projection * model * vec4(position.x, position.y, position.z, 1.0);
-	texCoord = texc;
-})";
+    gl_Position = projection * model * vec4(position, 1.0);
+    vertexColor = color;
+}
+)";
 
-// Código fonte do Fragment Shader (em GLSL): ainda hardcoded
+// Fragment Shader (GLSL) recebe cor interpolada
 const GLchar *fragmentShaderSource = R"(
-#version 400
-in vec2 texCoord;
-uniform sampler2D texBuff;
-out vec4 color;
+#version 400 core
+in vec3 vertexColor;
+out vec4 FragColor;
+
 void main()
 {
-	color = texture(texBuff,texCoord);
-})";
-
+    FragColor = vec4(vertexColor, 1.0);
+}
+)";
 // Função MAIN
 int main()
 {
-	// Inicialização da GLFW
-	glfwInit();
+    // Inicialização da GLFW
+    glfwInit();
 
-	// Muita atenção aqui: alguns ambientes não aceitam essas configurações
-	// Você deve adaptar para a versão do OpenGL suportada por sua placa
-	// Sugestão: comente essas linhas de código para desobrir a versão e
-	// depois atualize (por exemplo: 4.5 com 4 e 5)
-	/*glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);*/
+    GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Cubo Colorido por Vértice", nullptr, nullptr);
+    glfwMakeContextCurrent(window);
+    glfwSetKeyCallback(window, key_callback);
 
-	// Essencial para computadores da Apple
-	// #ifdef __APPLE__
-	//	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-	// #endif
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        cout << "Failed to initialize GLAD" << endl;
+        return -1;
+    }
 
-	// Criação da janela GLFW
-	GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Ola Triangulo Texturizado!", nullptr, nullptr);
-	glfwMakeContextCurrent(window);
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    glViewport(0, 0, width, height);
 
-	// Fazendo o registro da função de callback para a janela GLFW
-	glfwSetKeyCallback(window, key_callback);
+    GLuint shaderID = setupShader();
+    GLuint VAO = setupGeometry();
 
-	// GLAD: carrega todos os ponteiros d funções da OpenGL
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-	{
-		std::cout << "Failed to initialize GLAD" << std::endl;
-	}
+    glUseProgram(shaderID);
 
-	// Obtendo as informações de versão
-	const GLubyte *renderer = glGetString(GL_RENDERER); /* get renderer string */
-	const GLubyte *version = glGetString(GL_VERSION);	/* version as a string */
-	cout << "Renderer: " << renderer << endl;
-	cout << "OpenGL version supported " << version << endl;
+    // Matriz de projeção ortográfica 3D
+    mat4 projection = ortho(0.0f, 800.0f, 0.0f, 600.0f, -500.0f, 500.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shaderID, "projection"), 1, GL_FALSE, value_ptr(projection));
 
-	// Definindo as dimensões da viewport com as mesmas dimensões da janela da aplicação
-	int width, height;
-	glfwGetFramebufferSize(window, &width, &height);
-	glViewport(0, 0, width, height);
+    while (!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
 
-	// Compilando e buildando o programa de shader
-	GLuint shaderID = setupShader();
+        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
 
-	// Gerando um buffer simples, com a geometria de um triângulo
-	GLuint VAO = setupGeometry();
+        drawCube(shaderID, VAO, cubePosition, cubeScale, 0.0f);
 
-	// Carregando uma textura e armazenando seu id
-	int imgWidth, imgHeight;
-	GLuint texID = loadTexture("../assets/tex/pixelWall.png",imgWidth,imgHeight);
+        // Exemplo: desenha outras instâncias
+        drawCube(shaderID, VAO, cubePosition + vec3(200.0f, 0.0f, 0.0f), cubeScale * 0.5f, 0.0f);
+        drawCube(shaderID, VAO, cubePosition + vec3(-200.0f, -100.0f, 0.0f), cubeScale * 0.75f, 0.0f);
 
-	glUseProgram(shaderID);
+        glfwSwapBuffers(window);
+    }
 
-	// Enviar a informação de qual variável armazenará o buffer da textura
-	glUniform1i(glGetUniformLocation(shaderID, "texBuff"), 0);
-
-	//Ativando o primeiro buffer de textura da OpenGL
-	glActiveTexture(GL_TEXTURE0);
-	
-
-	// Matriz de projeção paralela ortográfica
-	// mat4 projection = ortho(-10.0, 10.0, -10.0, 10.0, -1.0, 1.0);
-	mat4 projection = ortho(0.0, 800.0, 0.0, 600.0, -1.0, 1.0);
-	glUniformMatrix4fv(glGetUniformLocation(shaderID, "projection"), 1, GL_FALSE, value_ptr(projection));
-
-	// Matriz de modelo: transformações na geometria (objeto)
-	mat4 model = mat4(1); // matriz identidade
-	glUniformMatrix4fv(glGetUniformLocation(shaderID, "model"), 1, GL_FALSE, value_ptr(model));
-
-	// Loop da aplicação - "game loop"
-	while (!glfwWindowShouldClose(window))
-	{
-		// Checa se houveram eventos de input (key pressed, mouse moved etc.) e chama as funções de callback correspondentes
-		glfwPollEvents();
-
-		// Limpa o buffer de cor
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // cor de fundo
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		glBindVertexArray(VAO); // Conectando ao buffer de geometria
-		glBindTexture(GL_TEXTURE_2D, texID); //conectando com o buffer de textura que será usado no draw
-
-		// Primeiro Triângulo
-		drawTriangle(shaderID, VAO, vec3(100.0, 500.0, 0.0), vec3(100.0, 100.0, 1.0), 0.0, vec3(0.0, 0.0, 1.0));
-
-		// Segundo Triângulo
-		drawTriangle(shaderID, VAO, vec3(350.0, 300.0, 0.0), vec3(200.0, 200.0, 1.0), 180.0, vec3(0.0, 1.0, 0.0));
-
-		// Terceiro Triângulo
-		drawTriangle(shaderID, VAO, vec3(600.0, 200.0, 0.0), vec3(300.0, 300.0, 1.0), 0.0, vec3(1.0, 0.0, 0.0));
-
-		glBindVertexArray(0); // Desconectando o buffer de geometria
-
-		// Troca os buffers da tela
-		glfwSwapBuffers(window);
-	}
-	// Pede pra OpenGL desalocar os buffers
-	glDeleteVertexArrays(1, &VAO);
-	// Finaliza a execução da GLFW, limpando os recursos alocados por ela
-	glfwTerminate();
-	return 0;
+    glDeleteVertexArrays(1, &VAO);
+    glfwTerminate();
+    return 0;
 }
 
 // Função de callback de teclado - só pode ter uma instância (deve ser estática se
@@ -179,9 +135,48 @@ int main()
 // ou solta via GLFW
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
 {
-	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, GL_TRUE);
+    const float moveSpeed = 10.0f;
+    const float scaleSpeed = 0.05f;
+    const float rotationSpeed = 5.0f;
+
+    if (action == GLFW_PRESS || action == GLFW_REPEAT)
+    {
+        // Fechar com ESC
+        if (key == GLFW_KEY_ESCAPE)
+            glfwSetWindowShouldClose(window, GL_TRUE);
+
+        // Movimento no eixo X e Z
+        if (key == GLFW_KEY_W)
+            cubePosition.y += moveSpeed;
+        if (key == GLFW_KEY_S)
+            cubePosition.y -= moveSpeed;
+        if (key == GLFW_KEY_A)
+            cubePosition.x -= moveSpeed;
+        if (key == GLFW_KEY_D)
+            cubePosition.x += moveSpeed;
+
+        // Movimento no eixo Y
+        if (key == GLFW_KEY_I)
+            cubePosition.z += moveSpeed;
+        if (key == GLFW_KEY_J)
+            cubePosition.z -= moveSpeed;
+
+        // Escala
+        if (key == GLFW_KEY_LEFT_BRACKET) // [
+            cubeScale *= (1.0f - scaleSpeed);
+        if (key == GLFW_KEY_RIGHT_BRACKET) // ]
+            cubeScale *= (1.0f + scaleSpeed);
+
+        // Rotação
+        if (key == GLFW_KEY_X)
+            cubeRotationX += rotationSpeed;
+        if (key == GLFW_KEY_Y)
+            cubeRotationY += rotationSpeed;
+        if (key == GLFW_KEY_Z)
+            cubeRotationZ += rotationSpeed;
+    }
 }
+
 
 // Esta função está basntante hardcoded - objetivo é compilar e "buildar" um programa de
 //  shader simples e único neste exemplo de código
@@ -190,167 +185,174 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
 //  A função retorna o identificador do programa de shader
 int setupShader()
 {
-	// Vertex shader
-	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-	glCompileShader(vertexShader);
-	// Checando erros de compilação (exibição via log no terminal)
-	GLint success;
-	GLchar infoLog[512];
-	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-	if (!success)
-	{
-		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n"
-				  << infoLog << std::endl;
-	}
-	// Fragment shader
-	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-	glCompileShader(fragmentShader);
-	// Checando erros de compilação (exibição via log no terminal)
-	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-	if (!success)
-	{
-		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n"
-				  << infoLog << std::endl;
-	}
-	// Linkando os shaders e criando o identificador do programa de shader
-	GLuint shaderProgram = glCreateProgram();
-	glAttachShader(shaderProgram, vertexShader);
-	glAttachShader(shaderProgram, fragmentShader);
-	glLinkProgram(shaderProgram);
-	// Checando por erros de linkagem
-	glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-	if (!success)
-	{
-		glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n"
-				  << infoLog << std::endl;
-	}
-	glDeleteShader(vertexShader);
-	glDeleteShader(fragmentShader);
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
 
-	return shaderProgram;
+    GLint success;
+    GLchar infoLog[512];
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+        cout << "ERROR::VERTEX_SHADER_COMPILATION_FAILED\n"
+             << infoLog << endl;
+    }
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+        cout << "ERROR::FRAGMENT_SHADER_COMPILATION_FAILED\n"
+             << infoLog << endl;
+    }
+
+    GLuint shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+        cout << "ERROR::SHADER_PROGRAM_LINKING_FAILED\n"
+             << infoLog << endl;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    return shaderProgram;
 }
 
-// Esta função está bastante harcoded - objetivo é criar os buffers que armazenam a
-// geometria de um triângulo
-// Apenas atributo coordenada nos vértices
-// 1 VBO com as coordenadas, VAO com apenas 1 ponteiro para atributo
-// A função retorna o identificador do VAO
-int setupGeometry()
-{
-	// Aqui setamos as coordenadas x, y e z do triângulo e as armazenamos de forma
-	// sequencial, já visando mandar para o VBO (Vertex Buffer Objects)
-	// Cada atributo do vértice (coordenada, cores, coordenadas de textura, normal, etc)
-	// Pode ser arazenado em um VBO único ou em VBOs separados
-	GLfloat vertices[] = {
-		// x    y    z   s    t 
-		// T0
-		-0.5, -0.5, 0.0, 0.0, 0.0,    // v0
-		 0.5, -0.5, 0.0, 1.0, 0.0,    // v1
-		 0.0,  0.5, 0.0, 0.5, 1.0  	  // v2
-	};
-
-	GLuint VBO, VAO;
-	// Geração do identificador do VBO
-	glGenBuffers(1, &VBO);
-	// Faz a conexão (vincula) do buffer como um buffer de array
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	// Envia os dados do array de floats para o buffer da OpenGl
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-	// Geração do identificador do VAO (Vertex Array Object)
-	glGenVertexArrays(1, &VAO);
-	// Vincula (bind) o VAO primeiro, e em seguida  conecta e seta o(s) buffer(s) de vértices
-	// e os ponteiros para os atributos
-	glBindVertexArray(VAO);
-	// Para cada atributo do vertice, criamos um "AttribPointer" (ponteiro para o atributo), indicando:
-	//  Localização no shader * (a localização dos atributos devem ser correspondentes no layout especificado no vertex shader)
-	//  Numero de valores que o atributo tem (por ex, 3 coordenadas xyz)
-	//  Tipo do dado
-	//  Se está normalizado (entre zero e um)
-	//  Tamanho em bytes
-	//  Deslocamento a partir do byte zero
-
-	//Atributo posição - coord x, y, z - 3 valores
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid *)0);
-	glEnableVertexAttribArray(0);
-
-	//Atributo coordenada de textura - coord s, t - 2 valores
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid *)(3* sizeof(GLfloat)));
-	glEnableVertexAttribArray(1);
-
-	// Observe que isso é permitido, a chamada para glVertexAttribPointer registrou o VBO como o objeto de buffer de vértice
-	// atualmente vinculado - para que depois possamos desvincular com segurança
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Desvincula o VAO (é uma boa prática desvincular qualquer buffer ou array para evitar bugs medonhos)
-	glBindVertexArray(0);
-
-	return VAO;
-}
-
+// Carrega uma textura de arquivo e retorna o id da textura na GPU, além de retornar a largura e altura da imagem carregada
 GLuint loadTexture(string filePath, int &width, int &height)
 {
-	GLuint texID; // id da textura a ser carregada
-
-	// Gera o identificador da textura na memória
-	glGenTextures(1, &texID);
-	glBindTexture(GL_TEXTURE_2D, texID);
-
-	// Ajuste dos parâmetros de wrapping e filtering
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
+	int nrChannels;
+	unsigned char *data = stbi_load(filePath.c_str(), &width, &height, &nrChannels, 0);
+	if (!data)
+	{
+		cout << "Falha ao carregar textura: " << filePath << endl;
+		return 0;
+	}
+	GLuint textureID;
+	glGenTextures(1, &textureID);
+	glBindTexture(GL_TEXTURE_2D, textureID);
+	// Configurações de filtro de textura
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // S = eixo x da textura
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT); // T = eixo y da textura
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-	// Carregamento da imagem usando a função stbi_load da biblioteca stb_image
-	int nrChannels;
-
-	unsigned char *data = stbi_load(filePath.c_str(), &width, &height, &nrChannels, 0);
-
-	if (data)
-	{
-		if (nrChannels == 3) // jpg, bmp
-		{
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-		}
-		else // assume que é 4 canais png
-		{
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-		}
-		glGenerateMipmap(GL_TEXTURE_2D);
-	}
+	// Determina o formato da textura de acordo com o número de canais da imagem
+	GLenum format;
+	if (nrChannels == 1)
+		format = GL_RED;
+	else if (nrChannels == 3)
+		format = GL_RGB;
+	else if (nrChannels == 4)
+		format = GL_RGBA;
 	else
-	{
-		std::cout << "Failed to load texture " << filePath << std::endl;
-	}
-
+		format = GL_RGB;
+	// Carrega os dados da imagem na textura da GPU
+	glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+	glGenerateMipmap(GL_TEXTURE_2D);
 	stbi_image_free(data);
-
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	return texID;
+	return textureID;
 }
 
-void drawTriangle(GLuint shaderID, GLuint VAO, vec3 position, vec3 dimensions, float angle, vec3 color, vec3 axis)
+// Esta função agora se chama drawCube, pois o que ela desenha é um cubo texturizado
+// Para simplicidade, o parâmetro 'color' não está sendo usado (você pode implementá-lo para colorir o cubo)
+// A função usa as rotações globais cubeRotationX, cubeRotationY e cubeRotationZ para aplicar rotação no cubo
+void drawCube(GLuint shaderID, GLuint VAO, vec3 position, vec3 scaleVec, float angle, vec3 axis)
 {
-	// Matriz de modelo: transformações na geometria (objeto)
-	mat4 model = mat4(1); // matriz identidade
-	// Translação
-	model = translate(model, position);
-	// Rotação
-	model = rotate(model, radians(angle), axis);
-	// Escala
-	model = scale(model, dimensions);
-	glUniformMatrix4fv(glGetUniformLocation(shaderID, "model"), 1, GL_FALSE, value_ptr(model));
+    glUseProgram(shaderID);
 
-	glUniform4f(glGetUniformLocation(shaderID, "inputColor"), color.r, color.g, color.b, 1.0f); // enviando cor para variável uniform inputColor
-																								//  Chamada de desenho - drawcall
-																								//  Poligono Preenchido - GL_TRIANGLES
-	glDrawArrays(GL_TRIANGLES, 0, 3);
+    mat4 model = mat4(1.0f);
+
+    // Translação, escala e rotação
+    model = translate(model, position);
+    model = rotate(model, radians(cubeRotationX), vec3(1.0f, 0.0f, 0.0f));
+    model = rotate(model, radians(cubeRotationY), vec3(0.0f, 1.0f, 0.0f));
+    model = rotate(model, radians(cubeRotationZ), vec3(0.0f, 0.0f, 1.0f));
+    model = scale(model, scaleVec);
+
+    GLuint modelLoc = glGetUniformLocation(shaderID, "model");
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, value_ptr(model));
+
+    glBindVertexArray(VAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+}
+
+// Setup da geometria do cubo: cria VAO e VBO com os dados de posição e coordenadas de textura
+GLuint setupGeometry()
+{
+    GLfloat vertices[] = {
+        // Positions          // Colors (RGB)
+        -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f, // vermelho
+         0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 0.0f, // verde
+         0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f, // azul
+         0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
+        -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f, // amarelo
+        -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
+
+        -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f, // magenta
+         0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 1.0f, // ciano
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f, // branco
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,
+        -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // cinza
+        -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
+
+        -0.5f,  0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.5f,
+        -0.5f, -0.5f, -0.5f,  0.5f, 0.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f,  0.5f, 0.0f, 1.0f,
+        -0.5f, -0.5f,  0.5f,  1.0f, 0.5f, 0.0f,
+        -0.5f,  0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+
+         0.5f,  0.5f,  0.5f,  0.3f, 0.7f, 0.9f,
+         0.5f,  0.5f, -0.5f,  0.6f, 0.1f, 0.3f,
+         0.5f, -0.5f, -0.5f,  0.8f, 0.5f, 0.2f,
+         0.5f, -0.5f, -0.5f,  0.8f, 0.5f, 0.2f,
+         0.5f, -0.5f,  0.5f,  0.2f, 0.8f, 0.5f,
+         0.5f,  0.5f,  0.5f,  0.3f, 0.7f, 0.9f,
+
+        -0.5f, -0.5f, -0.5f,  0.9f, 0.2f, 0.3f,
+         0.5f, -0.5f, -0.5f,  0.1f, 0.9f, 0.3f,
+         0.5f, -0.5f,  0.5f,  0.3f, 0.9f, 0.1f,
+         0.5f, -0.5f,  0.5f,  0.3f, 0.9f, 0.1f,
+        -0.5f, -0.5f,  0.5f,  0.9f, 0.3f, 0.1f,
+        -0.5f, -0.5f, -0.5f,  0.9f, 0.2f, 0.3f,
+
+        -0.5f,  0.5f, -0.5f,  0.2f, 0.3f, 0.9f,
+         0.5f,  0.5f, -0.5f,  0.3f, 0.2f, 0.9f,
+         0.5f,  0.5f,  0.5f,  0.9f, 0.3f, 0.2f,
+         0.5f,  0.5f,  0.5f,  0.9f, 0.3f, 0.2f,
+        -0.5f,  0.5f,  0.5f,  0.2f, 0.9f, 0.3f,
+        -0.5f,  0.5f, -0.5f,  0.2f, 0.3f, 0.9f
+    };
+
+    GLuint VAO, VBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    // posição
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid *)0);
+    glEnableVertexAttribArray(0);
+
+    // cor
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid *)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    return VAO;
 }
