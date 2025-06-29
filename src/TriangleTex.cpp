@@ -24,6 +24,7 @@ using namespace std;
 using namespace glm;
 using json = nlohmann::json;
 
+bool mouseEnabled = true;
 // --- Configurações ---
 const GLuint WIDTH = 800, HEIGHT = 600;
 
@@ -542,10 +543,31 @@ void drawCube(const Cube &cube)
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)positions.size());
 	glBindVertexArray(0);
 }
+static bool mKeyPressedLastFrame = false;
 
 // Processa input de teclado (movimenta câmera e cubo selecionado)
 void processInput(GLFWwindow *window)
 {
+
+	// Detecta tecla M para ligar/desligar mouse
+    bool mKeyPressed = glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS;
+    if (mKeyPressed && !mKeyPressedLastFrame)
+    {
+        mouseEnabled = !mouseEnabled;
+        if (mouseEnabled)
+        {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            firstMouse = true; // resetar para evitar salto no movimento
+            cout << "Mouse control ENABLED\n";
+        }
+        else
+        {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            cout << "Mouse control DISABLED\n";
+        }
+    }
+
+    mKeyPressedLastFrame = mKeyPressed;
 	float cameraSpeed = 2.5f * deltaTime;
 	float cubeMoveSpeed = 1.0f * deltaTime;
 	float cubeRotateSpeed = 45.0f * deltaTime;
@@ -610,27 +632,29 @@ void processInput(GLFWwindow *window)
 	if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
 		c.rotation.z -= cubeRotateSpeed;
 }
-
 // Callback para controlar o olhar da câmera pelo mouse
 void mouse_callback(GLFWwindow *window, double xpos, double ypos)
 {
-	if (firstMouse)
-	{
-		lastX = (float)xpos;
-		lastY = (float)ypos;
-		firstMouse = false;
-	}
+    if (!mouseEnabled)
+        return;
 
-	float xoffset = (float)(xpos - lastX);
-	float yoffset = (float)(lastY - ypos); // invertido porque Y-coord do mouse é do topo
-	lastX = (float)xpos;
-	lastY = (float)ypos;
+    if (firstMouse)
+    {
+        lastX = (float)xpos;
+        lastY = (float)ypos;
+        firstMouse = false;
+    }
 
-	float sensitivity = 0.1f;
-	xoffset *= sensitivity;
-	yoffset *= sensitivity;
+    float xoffset = (float)(xpos - lastX);
+    float yoffset = (float)(lastY - ypos); // invertido porque Y-coord do mouse é do topo
+    lastX = (float)xpos;
+    lastY = (float)ypos;
 
-	camera.rotate(xoffset, yoffset);
+    float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    camera.rotate(xoffset, yoffset);
 }
 
 bool loadCubesFromJSON(const string &jsonPath)
