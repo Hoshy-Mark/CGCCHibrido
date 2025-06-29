@@ -1,0 +1,56 @@
+[
+  {
+    "id": 1,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/areia.jpg",
+    "initial_position": [-2.0, 2.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 2,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/madeira.jpg",
+    "initial_position": [0.0, 2.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 3,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/pixelWall.png",
+    "initial_position": [2.0, 2.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 4,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/madeira.jpg",
+    "initial_position": [-2.0, 0.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 5,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/areia.jpg",
+    "initial_position": [0.0, 0.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 6,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/madeira.jpg",
+    "initial_position": [2.0, 0.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 7,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/pixelWall.png",
+    "initial_position": [-2.0, -2.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 8,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/madeira.jpg",
+    "initial_position": [0.0, -2.0, -5.0],
+    "trajectory": []
+  },
+  {
+    "id": 9,
+    "texture": "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/areia.jpg",
+    "initial_position": [2.0, -2.0, -5.0],
+    "trajectory": []
+  }
+]

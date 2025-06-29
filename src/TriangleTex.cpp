@@ -1,13 +1,13 @@
-/* Hello Textured OBJ Viewer com modelo Phong
- * Versão com instâncias, interação por teclado e iluminação Phong
- * Adaptado por ChatGPT (junho/2025)
- */
 
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <string>
+#include <cmath>
+#include <unordered_map>
+
+#include "json.hpp"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -18,66 +18,50 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <filesystem>
 
 using namespace std;
 using namespace glm;
+using json = nlohmann::json;
 
-// --- Variáveis globais ---
+// --- Configurações ---
 const GLuint WIDTH = 800, HEIGHT = 600;
+
 GLFWwindow *window;
 
+// Dados para o cubo
 vector<vec3> positions;
 vector<vec2> texCoords;
+vector<vec3> normals;
 
-GLuint textureID;
+// Shader
+GLuint shaderProgram;
 
-// Cubo 1 (central)
-vector<vec3> trajectoryPoints1 = {
-	vec3(0.0f, 0.0f, -5.0f),
-	vec3(4.0f, 0.0f, -5.0f),
-	vec3(4.0f, 4.0f, -5.0f),
-	vec3(0.0f, 4.0f, -5.0f),
-	vec3(-4.0f, 4.0f, -5.0f),
-	vec3(-4.0f, 0.0f, -5.0f),
-	vec3(0.0f, 0.0f, -5.0f)};
-size_t currentTargetIndex1 = 0;
-vec3 cubePosition1 = vec3(0.0f, 0.0f, -5.0f);
+// VAO e VBO
+GLuint VAO, VBO;
 
-// Cubo 2 (direita)
-vector<vec3> trajectoryPoints2 = {
-	vec3(4.0f, 0.0f, -5.0f),
-	vec3(4.0f, 4.0f, -5.0f),
-	vec3(0.0f, 4.0f, -5.0f),
-	vec3(-4.0f, 4.0f, -5.0f),
-	vec3(-4.0f, 0.0f, -5.0f),
-	vec3(0.0f, 0.0f, -5.0f),
-	vec3(4.0f, 0.0f, -5.0f)};
-size_t currentTargetIndex2 = 0;
-vec3 cubePosition2 = vec3(4.0f, 0.0f, -5.0f);
+// --- Estrutura do Cubo ---
+struct Cube
+{
+	vec3 position;
+	vec3 rotation; // rotações em graus
+	vec3 scale;
+	GLuint textureID;
+};
 
-// Cubo 3 (esquerda)
-vector<vec3> trajectoryPoints3 = {
-	vec3(-4.0f, 0.0f, -5.0f),
-	vec3(-4.0f, -4.0f, -5.0f),
-	vec3(0.0f, -4.0f, -5.0f),
-	vec3(4.0f, -4.0f, -5.0f),
-	vec3(4.0f, 0.0f, -5.0f),
-	vec3(-4.0f, 0.0f, -5.0f)};
-size_t currentTargetIndex3 = 0;
-vec3 cubePosition3 = vec3(-4.0f, 0.0f, -5.0f);
+vector<Cube> cubes;
+int selectedCube = 0; // cubo selecionado
 
-// Velocidade global (pode usar a mesma para todos, ou diferente)
-float moveSpeed = 1.0f;
-// --- Classe Camera ---
+// --- Câmera FPS ---
 class Camera
 {
 public:
 	vec3 position;
-	float yaw;	 // ângulo de rotação em torno de Y
-	float pitch; // ângulo de rotação em torno de X
+	float yaw;
+	float pitch;
 
-	Camera(vec3 startPosition = vec3(0.0f, 0.0f, 3.0f), float startYaw = -90.0f, float startPitch = 0.0f)
-		: position(startPosition), yaw(startYaw), pitch(startPitch) {}
+	Camera(vec3 pos = vec3(0.0f, 0.0f, 3.0f), float y = -90.0f, float p = 0.0f)
+		: position(pos), yaw(y), pitch(p) {}
 
 	mat4 getViewMatrix()
 	{
@@ -114,6 +98,7 @@ public:
 	{
 		yaw += deltaYaw;
 		pitch += deltaPitch;
+
 		if (pitch > 89.0f)
 			pitch = 89.0f;
 		if (pitch < -89.0f)
@@ -129,24 +114,34 @@ private:
 		front.z = sin(radians(yaw)) * cos(radians(pitch));
 		return normalize(front);
 	}
-
 	vec3 getRightVector()
 	{
 		vec3 front = getFrontVector();
-		vec3 right = normalize(cross(front, vec3(0.0f, 1.0f, 0.0f)));
-		return right;
+		return normalize(cross(front, vec3(0.0f, 1.0f, 0.0f)));
 	}
 };
 
-// --- Variáveis para interação ---
 Camera camera;
-vec3 cubePosition = vec3(0.0f, 0.0f, -5.0f);
-vec3 cubeScale = vec3(1.0f);
-float cubeRotationX = 0.0f;
-float cubeRotationY = 0.0f;
-float cubeRotationZ = 0.0f;
 
-// --- Vertex Shader ---
+// Estado mouse
+bool firstMouse = true;
+float lastX = WIDTH / 2.0f;
+float lastY = HEIGHT / 2.0f;
+
+// Controle delta tempo
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
+
+// Funções
+void mouse_callback(GLFWwindow *window, double xpos, double ypos);
+void processInput(GLFWwindow *window);
+GLuint loadTexture(const string &path);
+bool loadOBJ(const string &objPath);
+GLuint setupShader();
+void setupGeometry();
+void drawCube(const Cube &cube);
+bool loadCubesFromJSON(const string &jsonPath);
+
 const char *vertexShaderSource = R"(
 #version 400 core
 layout (location = 0) in vec3 aPos;
@@ -164,13 +159,12 @@ uniform mat4 model;
 void main()
 {
     gl_Position = projection * view * model * vec4(aPos, 1.0);
-    FragPos = vec3(model * vec4(aPos, 1.0));
+    FragPos = vec3(model * vec4(aPos,1.0));
     Normal = mat3(transpose(inverse(model))) * aNormal;
     TexCoord = aTexCoord;
 }
 )";
 
-// --- Fragment Shader ---
 const char *fragmentShaderSource = R"(
 #version 400 core
 in vec2 TexCoord;
@@ -187,106 +181,111 @@ uniform vec3 objectColor;
 
 void main()
 {
-    vec3 ambientColor = 0.2 * lightColor;
+    vec3 ambient = 0.2 * lightColor;
 
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuseColor = diff * lightColor;
+    vec3 diffuse = diff * lightColor;
 
     float shininess = 32.0;
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
-    vec3 specularColor = spec * lightColor;
+    vec3 specular = spec * lightColor;
 
-    vec3 phong = (ambientColor + diffuseColor + specularColor);
+    vec3 phong = (ambient + diffuse + specular);
 
     vec4 texColor = texture(texture1, TexCoord);
     FragColor = vec4(phong, 1.0) * texColor;
 }
 )";
 
-// --- Funções ---
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
-GLuint setupShader();
-GLuint setupGeometry();
-bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut);
-GLuint loadTexture(const string &filePath);
-void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scale, vec3 rotation);
-
-// --- Funções ---
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
-GLuint setupShader();
-GLuint setupGeometry();
-bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut);
-GLuint loadTexture(const string &filePath);
-void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scale, vec3 rotation);
-
 int main()
 {
-	std::string objPath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/Modelos3D/Cube.obj"; //Precisa alterar esse caminho
-	std::string mtlPath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/Modelos3D/Cube.mtl";  //Precisa alterar esse caminho
-	std::string texturePath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/tex/pixelWall.png";  //Precisa alterar esse caminho
+	string cubeJsonPath = "cubes.json";												   // ajuste para seu arquivo JSON
+	string objPath = "C:/Users/Kamar/Downloads/CGCCHibrido/assets/Modelos3D/Cube.obj"; // seu arquivo OBJ do cubo
 
-	std::string textureFile;
+	// Inicializa GLFW
+	if (!glfwInit())
+	{
+		cout << "Failed to initialize GLFW\n";
+		return -1;
+	}
 
-	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	window = glfwCreateWindow(WIDTH, HEIGHT, "OBJ Viewer with Camera", nullptr, nullptr);
+	window = glfwCreateWindow(WIDTH, HEIGHT, "Cubes Movable with FPS Camera", nullptr, nullptr);
+	if (!window)
+	{
+		cout << "Failed to create GLFW window\n";
+		glfwTerminate();
+		return -1;
+	}
 	glfwMakeContextCurrent(window);
-	glfwSetKeyCallback(window, key_callback);
+
+	// Configura callback mouse
+	glfwSetCursorPosCallback(window, mouse_callback);
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
-		cout << "Failed to initialize GLAD" << endl;
+		cout << "Failed to initialize GLAD\n";
 		return -1;
 	}
 
 	glViewport(0, 0, WIDTH, HEIGHT);
 	glEnable(GL_DEPTH_TEST);
 
-	GLuint shaderProgram = setupShader();
-
-	if (!loadOBJ(objPath, mtlPath, textureFile))
+	// Carrega cubos do JSON
+	if (!loadCubesFromJSON(cubeJsonPath))
 	{
-		cout << "Erro ao carregar Cube.obj" << endl;
+		cout << "Failed to load cubes JSON\n";
 		return -1;
 	}
 
-	textureID = loadTexture(texturePath);
-	if (textureID == 0)
+	// Carrega OBJ
+	if (!loadOBJ(objPath))
 	{
-		cout << "Erro ao carregar textura: " << texturePath << endl;
+		cout << "Failed to load OBJ\n";
 		return -1;
 	}
 
-	GLuint VAO = setupGeometry();
+	setupGeometry();
+	shaderProgram = setupShader();
+
+	// Carregar texturas dos cubos
+	for (auto &cube : cubes)
+	{
+	}
+
+
+	// Luz e câmera
+	vec3 lightPos(3.0f, 3.0f, 3.0f);
+	vec3 lightColor(1.0f, 1.0f, 1.0f);
+	vec3 objectColor(1.0f, 1.0f, 1.0f);
 
 	mat4 projection = perspective(radians(45.0f), (float)WIDTH / (float)HEIGHT, 0.1f, 100.0f);
 
-	vec3 lightPos = vec3(3.0f, 3.0f, 3.0f);
-	vec3 lightColor = vec3(1.0f);
-	vec3 objectColor = vec3(1.0f);
-	float lastFrameTime = glfwGetTime();
-
 	while (!glfwWindowShouldClose(window))
 	{
-		float currentFrameTime = glfwGetTime();
-		float deltaTime = currentFrameTime - lastFrameTime;
-		lastFrameTime = currentFrameTime;
+		// Tempo
+		float currentFrame = glfwGetTime();
+		deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
 
-		glfwPollEvents();
+		// Input
+		processInput(window);
 
+		// Render
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		glUseProgram(shaderProgram);
-		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
 
+		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
 		mat4 view = camera.getViewMatrix();
 		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, value_ptr(view));
 
@@ -295,64 +294,138 @@ int main()
 		glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, value_ptr(lightColor));
 		glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, value_ptr(objectColor));
 
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, textureID);
-		glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-
-		// --- Atualizar posição do Cubo 1 ---
-		vec3 targetPos1 = trajectoryPoints1[currentTargetIndex1];
-		vec3 direction1 = normalize(targetPos1 - cubePosition1);
-		float distance1 = length(targetPos1 - cubePosition1);
-
-		if (distance1 < 0.05f)
+		for (const Cube &cube : cubes)
 		{
-			currentTargetIndex1 = (currentTargetIndex1 + 1) % trajectoryPoints1.size();
+			drawCube(cube);
 		}
-		else
-		{
-			cubePosition1 += direction1 * moveSpeed * deltaTime;
-		}
-
-		// --- Atualizar posição do Cubo 2 ---
-		vec3 targetPos2 = trajectoryPoints2[currentTargetIndex2];
-		vec3 direction2 = normalize(targetPos2 - cubePosition2);
-		float distance2 = length(targetPos2 - cubePosition2);
-
-		if (distance2 < 0.05f)
-		{
-			currentTargetIndex2 = (currentTargetIndex2 + 1) % trajectoryPoints2.size();
-		}
-		else
-		{
-			cubePosition2 += direction2 * moveSpeed * deltaTime;
-		}
-
-		// --- Atualizar posição do Cubo 3 ---
-		vec3 targetPos3 = trajectoryPoints3[currentTargetIndex3];
-		vec3 direction3 = normalize(targetPos3 - cubePosition3);
-		float distance3 = length(targetPos3 - cubePosition3);
-
-		if (distance3 < 0.05f)
-		{
-			currentTargetIndex3 = (currentTargetIndex3 + 1) % trajectoryPoints3.size();
-		}
-		else
-		{
-			cubePosition3 += direction3 * moveSpeed * deltaTime;
-		}
-
-		// --- Desenhar os 3 cubos ---
-		drawCube(shaderProgram, VAO, cubePosition1, cubeScale, vec3(cubeRotationX, cubeRotationY, cubeRotationZ));
-		drawCube(shaderProgram, VAO, cubePosition2, cubeScale, vec3(cubeRotationX, cubeRotationY, cubeRotationZ));
-		drawCube(shaderProgram, VAO, cubePosition3, cubeScale, vec3(cubeRotationX, cubeRotationY, cubeRotationZ));
 
 		glfwSwapBuffers(window);
+		glfwPollEvents();
 	}
 
 	glfwTerminate();
 	return 0;
 }
 
+// Função que carrega o OBJ (simples, sem indices, triangulado)
+// Atribui valores aos vetores globais: positions, texCoords, normals
+bool loadOBJ(const string &objPath)
+{
+	ifstream file(objPath);
+	if (!file.is_open())
+	{
+		cout << "Failed to open OBJ file: " << objPath << endl;
+		return false;
+	}
+
+	vector<vec3> temp_positions;
+	vector<vec2> temp_texCoords;
+	vector<vec3> temp_normals;
+
+	vector<unsigned int> vertexIndices, texCoordIndices, normalIndices;
+
+	string line;
+	while (getline(file, line))
+	{
+		if (line.substr(0, 2) == "v ")
+		{
+			istringstream s(line.substr(2));
+			vec3 v;
+			s >> v.x >> v.y >> v.z;
+			temp_positions.push_back(v);
+		}
+		else if (line.substr(0, 3) == "vt ")
+		{
+			istringstream s(line.substr(3));
+			vec2 vt;
+			s >> vt.x >> vt.y;
+			temp_texCoords.push_back(vt);
+		}
+		else if (line.substr(0, 3) == "vn ")
+		{
+			istringstream s(line.substr(3));
+			vec3 vn;
+			s >> vn.x >> vn.y >> vn.z;
+			temp_normals.push_back(vn);
+		}
+		else if (line.substr(0, 2) == "f ")
+		{
+			istringstream s(line.substr(2));
+			string vertex1, vertex2, vertex3;
+			s >> vertex1 >> vertex2 >> vertex3;
+
+			unsigned int vi[3], ti[3], ni[3];
+			for (int i = 0; i < 3; ++i)
+			{
+				string vertexStr = (i == 0) ? vertex1 : (i == 1) ? vertex2
+																 : vertex3;
+				size_t pos1 = vertexStr.find('/');
+				size_t pos2 = vertexStr.find('/', pos1 + 1);
+
+				vi[i] = stoi(vertexStr.substr(0, pos1)) - 1;
+
+				ti[i] = stoi(vertexStr.substr(pos1 + 1, pos2 - pos1 - 1)) - 1;
+
+				ni[i] = stoi(vertexStr.substr(pos2 + 1)) - 1;
+			}
+
+			for (int i = 0; i < 3; ++i)
+			{
+				positions.push_back(temp_positions[vi[i]]);
+				texCoords.push_back(temp_texCoords[ti[i]]);
+				normals.push_back(temp_normals[ni[i]]);
+			}
+		}
+	}
+	file.close();
+	return true;
+}
+
+// Setup VAO, VBO
+void setupGeometry()
+{
+	vector<float> data;
+	for (size_t i = 0; i < positions.size(); ++i)
+	{
+		// pos x,y,z
+		data.push_back(positions[i].x);
+		data.push_back(positions[i].y);
+		data.push_back(positions[i].z);
+
+		// tex coords u,v
+		data.push_back(texCoords[i].x);
+		data.push_back(texCoords[i].y);
+
+		// normals x,y,z
+		data.push_back(normals[i].x);
+		data.push_back(normals[i].y);
+		data.push_back(normals[i].z);
+	}
+
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+
+	glBindVertexArray(VAO);
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_STATIC_DRAW);
+
+	// posição
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)0);
+	glEnableVertexAttribArray(0);
+
+	// textura
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	// normal
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(5 * sizeof(float)));
+	glEnableVertexAttribArray(2);
+
+	glBindVertexArray(0);
+}
+
+// Compila e cria shader program
 GLuint setupShader()
 {
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -364,179 +437,80 @@ GLuint setupShader()
 	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
 	if (!success)
 	{
-		glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-		cout << "Vertex Shader Error:\n"
+		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+		cout << "Error compiling vertex shader:\n"
 			 << infoLog << endl;
 	}
 
 	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
 	glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
 	glCompileShader(fragmentShader);
+
 	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
 	if (!success)
 	{
-		glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-		cout << "Fragment Shader Error:\n"
+		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+		cout << "Error compiling fragment shader:\n"
 			 << infoLog << endl;
 	}
 
-	GLuint shaderProgram = glCreateProgram();
-	glAttachShader(shaderProgram, vertexShader);
-	glAttachShader(shaderProgram, fragmentShader);
-	glLinkProgram(shaderProgram);
-	glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+	GLuint program = glCreateProgram();
+	glAttachShader(program, vertexShader);
+	glAttachShader(program, fragmentShader);
+	glLinkProgram(program);
+
+	glGetProgramiv(program, GL_LINK_STATUS, &success);
 	if (!success)
 	{
-		glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
-		cout << "Shader Linking Error:\n"
+		glGetProgramInfoLog(program, 512, NULL, infoLog);
+		cout << "Error linking shader program:\n"
 			 << infoLog << endl;
 	}
 
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
 
-	return shaderProgram;
+	return program;
 }
 
-GLuint setupGeometry()
+// Carrega textura e retorna ID
+GLuint loadTexture(const string &path)
 {
-	GLuint VAO, VBO;
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
-
-	struct Vertex
+	if (path.empty())
 	{
-		vec3 pos;
-		vec2 tex;
-		vec3 normal;
-	};
-
-	vector<Vertex> vertices;
-	for (size_t i = 0; i < positions.size(); i++)
-	{
-		Vertex v;
-		v.pos = positions[i];
-		v.tex = texCoords[i];
-		v.normal = vec3(0.0f, 0.0f, 1.0f); // normal default — (opcional: calcular normal real!)
-		vertices.push_back(v);
-	}
-
-	glBindVertexArray(VAO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
-
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)0);
-	glEnableVertexAttribArray(0);
-
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)offsetof(Vertex, tex));
-	glEnableVertexAttribArray(1);
-
-	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)offsetof(Vertex, normal));
-	glEnableVertexAttribArray(2);
-
-	glBindVertexArray(0);
-
-	return VAO;
-}
-
-bool loadOBJ(const string &objPath, const string &mtlPath, string &textureFileOut)
-{
-	ifstream objFile(objPath);
-	if (!objFile.is_open())
-	{
-		cout << "Não foi possível abrir OBJ: " << objPath << endl;
-		return false;
-	}
-
-	vector<vec3> tempPositions;
-	vector<vec2> tempTexCoords;
-
-	string line;
-	while (getline(objFile, line))
-	{
-		istringstream iss(line);
-		string prefix;
-		iss >> prefix;
-
-		if (prefix == "v")
-		{
-			vec3 pos;
-			iss >> pos.x >> pos.y >> pos.z;
-			tempPositions.push_back(pos);
-		}
-		else if (prefix == "vt")
-		{
-			vec2 tex;
-			iss >> tex.x >> tex.y;
-			tex.y = 1.0f - tex.y;
-			tempTexCoords.push_back(tex);
-		}
-		else if (prefix == "f")
-		{
-			for (int i = 0; i < 3; i++)
-			{
-				string v;
-				iss >> v;
-
-				size_t pos1 = v.find('/');
-				size_t pos2 = v.find('/', pos1 + 1);
-
-				int vi = stoi(v.substr(0, pos1)) - 1;
-				int ti = stoi(v.substr(pos1 + 1, pos2 - pos1 - 1)) - 1;
-
-				positions.push_back(tempPositions[vi]);
-				texCoords.push_back(tempTexCoords[ti]);
-			}
-		}
-	}
-
-	ifstream mtlFile(mtlPath);
-	if (!mtlFile.is_open())
-	{
-		cout << "Não foi possível abrir MTL: " << mtlPath << endl;
-		return false;
-	}
-
-	while (getline(mtlFile, line))
-	{
-		istringstream iss(line);
-		string prefix;
-		iss >> prefix;
-
-		if (prefix == "map_Kd")
-		{
-			string texFile;
-			iss >> texFile;
-
-			string mtlDir = mtlPath.substr(0, mtlPath.find_last_of("/\\"));
-			textureFileOut = mtlDir + "/" + texFile;
-			break;
-		}
-	}
-
-	cout << "OBJ carregado com " << positions.size() << " vértices.\n";
-	cout << "Textura: " << textureFileOut << endl;
-	return true;
-}
-
-GLuint loadTexture(const string &filePath)
-{
-	int width, height, nrChannels;
-	stbi_set_flip_vertically_on_load(true);
-	unsigned char *data = stbi_load(filePath.c_str(), &width, &height, &nrChannels, 0);
-	if (!data)
-	{
-		cout << "Falha ao carregar imagem: " << filePath << endl;
+		cout << "loadTexture: caminho vazio\n";
 		return 0;
 	}
 
-	GLuint texID;
-	glGenTextures(1, &texID);
-	glBindTexture(GL_TEXTURE_2D, texID);
+	int width, height, nrChannels;
+	stbi_set_flip_vertically_on_load(true);
+	unsigned char *data = stbi_load(path.c_str(), &width, &height, &nrChannels, 0);
+	if (!data)
+	{
+		cout << "Failed to load texture: " << path << endl;
+		return 0;
+	}
+	cout << "Loaded texture: " << path << " (" << width << "x" << height << "), channels: " << nrChannels << endl;
 
-	GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+	GLuint textureID;
+	glGenTextures(1, &textureID);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+	GLenum format;
+	if (nrChannels == 1)
+		format = GL_RED;
+	else if (nrChannels == 3)
+		format = GL_RGB;
+	else if (nrChannels == 4)
+		format = GL_RGBA;
+	else
+	{
+		cout << "Formato de textura não suportado: " << nrChannels << " canais\n";
+		stbi_image_free(data);
+		return 0;
+	}
+
+	glBindTexture(GL_TEXTURE_2D, textureID);
+	glTexImage2D(GL_TEXTURE_2D, 0, (GLint)format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
 	glGenerateMipmap(GL_TEXTURE_2D);
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -545,138 +519,165 @@ GLuint loadTexture(const string &filePath)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 	stbi_image_free(data);
-	return texID;
+	return textureID;
 }
 
-void drawCube(GLuint shaderProgram, GLuint VAO, vec3 position, vec3 scaleVec, vec3 rotation)
+// Desenha cubo dado (posição, rotação, escala, textura)
+void drawCube(const Cube &cube)
 {
-	mat4 model = translate(mat4(1.0f), position);
-	model = rotate(model, radians(rotation.x), vec3(1.0f, 0.0f, 0.0f));
-	model = rotate(model, radians(rotation.y), vec3(0.0f, 1.0f, 0.0f));
-	model = rotate(model, radians(rotation.z), vec3(0.0f, 0.0f, 1.0f));
-	model = glm::scale(model, scaleVec);
+	mat4 model = mat4(1.0f);
+	model = translate(model, cube.position);
+	model = rotate(model, radians(cube.rotation.x), vec3(1, 0, 0));
+	model = rotate(model, radians(cube.rotation.y), vec3(0, 1, 0));
+	model = rotate(model, radians(cube.rotation.z), vec3(0, 0, 1));
+	model = scale(model, cube.scale);
 
 	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
 
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, cube.textureID);
+	glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
+
 	glBindVertexArray(VAO);
-	glDrawArrays(GL_TRIANGLES, 0, positions.size());
+	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)positions.size());
 	glBindVertexArray(0);
 }
 
-void loadTrajectoryPoints(vector<vec3> &points, const string &filename)
+// Processa input de teclado (movimenta câmera e cubo selecionado)
+void processInput(GLFWwindow *window)
 {
-	ifstream inFile(filename);
-	if (!inFile.is_open())
+	float cameraSpeed = 2.5f * deltaTime;
+	float cubeMoveSpeed = 1.0f * deltaTime;
+	float cubeRotateSpeed = 45.0f * deltaTime;
+
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+
+	// Movimenta câmera
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+		camera.moveForward(cameraSpeed);
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		camera.moveForward(-cameraSpeed);
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+		camera.moveRight(-cameraSpeed);
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+		camera.moveRight(cameraSpeed);
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+		camera.moveUp(cameraSpeed);
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+		camera.moveUp(-cameraSpeed);
+
+	// Seleção de cubo 1-9
+	for (int i = GLFW_KEY_1; i <= GLFW_KEY_9; i++)
 	{
-		cout << "Erro ao abrir arquivo: " << filename << endl;
-		return;
-	}
-
-	points.clear();
-	vec3 p;
-	while (inFile >> p.x >> p.y >> p.z)
-	{
-		points.push_back(p);
-	}
-
-	inFile.close();
-	cout << "Trajetória carregada de " << filename << " com " << points.size() << " pontos." << endl;
-}
-
-void saveTrajectoryPoints(const vector<vec3> &points, const string &filename)
-{
-	ofstream outFile(filename);
-	if (!outFile.is_open())
-	{
-		cout << "Erro ao salvar arquivo: " << filename << endl;
-		return;
-	}
-
-	for (const auto &p : points)
-	{
-		outFile << p.x << " " << p.y << " " << p.z << "\n";
-	}
-
-	outFile.close();
-	cout << "Trajetória salva em " << filename << endl;
-}
-
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
-{
-	const float moveSpeed = 0.1f;
-	const float rotateSpeed = 2.0f;
-	static int currentCube = 1; // 1, 2 ou 3 para selecionar o cubo alvo
-
-	if (action == GLFW_PRESS || action == GLFW_REPEAT)
-	{
-		if (key == GLFW_KEY_ESCAPE)
-			glfwSetWindowShouldClose(window, true);
-
-		// Movimento da Câmera
-		if (key == GLFW_KEY_W)
-			camera.moveForward(moveSpeed);
-		if (key == GLFW_KEY_S)
-			camera.moveForward(-moveSpeed);
-		if (key == GLFW_KEY_A)
-			camera.moveRight(-moveSpeed);
-		if (key == GLFW_KEY_D)
-			camera.moveRight(moveSpeed);
-		if (key == GLFW_KEY_Q)
-			camera.moveUp(moveSpeed);
-		if (key == GLFW_KEY_E)
-			camera.moveUp(-moveSpeed);
-
-		// Rotação da Câmera
-		if (key == GLFW_KEY_LEFT)
-			camera.rotate(-rotateSpeed, 0.0f);
-		if (key == GLFW_KEY_RIGHT)
-			camera.rotate(rotateSpeed, 0.0f);
-		if (key == GLFW_KEY_UP)
-			camera.rotate(0.0f, rotateSpeed);
-		if (key == GLFW_KEY_DOWN)
-			camera.rotate(0.0f, -rotateSpeed);
-		if (action == GLFW_PRESS)
+		if (glfwGetKey(window, i) == GLFW_PRESS)
 		{
-			if (key == GLFW_KEY_1)
-				currentCube = 1;
-			else if (key == GLFW_KEY_2)
-				currentCube = 2;
-			else if (key == GLFW_KEY_3)
-				currentCube = 3;
-
-			// Caminho base
-			string basePath = "C:/Users/Kamar/Downloads/CGCCHibrido/src/Trajetorias/"; //Precisa alterar esse caminho
-
-			if (key == GLFW_KEY_P) // Salvar trajetória
+			int idx = i - GLFW_KEY_1;
+			if (idx < (int)cubes.size())
 			{
-				string filename = basePath + "trajetoria_cubo" + to_string(currentCube) + ".txt";
-
-				if (currentCube == 1)
-					saveTrajectoryPoints(trajectoryPoints1, filename);
-				else if (currentCube == 2)
-					saveTrajectoryPoints(trajectoryPoints2, filename);
-				else if (currentCube == 3)
-					saveTrajectoryPoints(trajectoryPoints3, filename);
-			}
-			else if (key == GLFW_KEY_O) // Carregar trajetória
-			{
-				string filename = basePath + "trajetoria_cubo" + to_string(currentCube) + ".txt";
-
-				if (currentCube == 1)
-					loadTrajectoryPoints(trajectoryPoints1, filename);
-				else if (currentCube == 2)
-					loadTrajectoryPoints(trajectoryPoints2, filename);
-				else if (currentCube == 3)
-					loadTrajectoryPoints(trajectoryPoints3, filename);
-
-				// Resetar o índice para iniciar a trajetória do começo
-				if (currentCube == 1)
-					currentTargetIndex1 = 0;
-				else if (currentCube == 2)
-					currentTargetIndex2 = 0;
-				else if (currentCube == 3)
-					currentTargetIndex3 = 0;
+				selectedCube = idx;
 			}
 		}
 	}
+
+	Cube &c = cubes[selectedCube];
+
+	// Movimento cubo selecionado (no plano XY e eixo Z)
+	if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+		c.position.y += cubeMoveSpeed;
+	if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+		c.position.y -= cubeMoveSpeed;
+	if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		c.position.x -= cubeMoveSpeed;
+	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+		c.position.x += cubeMoveSpeed;
+	if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+		c.position.z += cubeMoveSpeed;
+	if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)
+		c.position.z -= cubeMoveSpeed;
+
+	// Rotação cubo selecionado (IJKL/U/O)
+	if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS)
+		c.rotation.x += cubeRotateSpeed;
+	if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS)
+		c.rotation.x -= cubeRotateSpeed;
+	if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)
+		c.rotation.y += cubeRotateSpeed;
+	if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)
+		c.rotation.y -= cubeRotateSpeed;
+	if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)
+		c.rotation.z += cubeRotateSpeed;
+	if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
+		c.rotation.z -= cubeRotateSpeed;
+}
+
+// Callback para controlar o olhar da câmera pelo mouse
+void mouse_callback(GLFWwindow *window, double xpos, double ypos)
+{
+	if (firstMouse)
+	{
+		lastX = (float)xpos;
+		lastY = (float)ypos;
+		firstMouse = false;
+	}
+
+	float xoffset = (float)(xpos - lastX);
+	float yoffset = (float)(lastY - ypos); // invertido porque Y-coord do mouse é do topo
+	lastX = (float)xpos;
+	lastY = (float)ypos;
+
+	float sensitivity = 0.1f;
+	xoffset *= sensitivity;
+	yoffset *= sensitivity;
+
+	camera.rotate(xoffset, yoffset);
+}
+
+bool loadCubesFromJSON(const string &jsonPath)
+{
+	cout << "Abrindo arquivo JSON: " << jsonPath << endl;
+	ifstream file("C:/Users/Kamar/Downloads/CGCCHibrido/assets/cube.json"); // substitua aqui pelo caminho absoluto
+	if (!file.is_open())
+	{
+		cout << "Erro ao abrir arquivo JSON: " << jsonPath << endl;
+		return false;
+	}
+
+	json j;
+	file >> j;
+
+	unordered_map<int, unsigned int> idToTextureID;
+
+	for (const auto &c : j)
+	{
+		int id = c["id"];
+		string texPath = c["texture"];
+		cout << "Lendo cubo com id: " << id << ", textura: '" << texPath << "'" << endl;
+
+		if (texPath.empty())
+		{
+			cout << "loadTexture: caminho vazio para id " << id << endl;
+			continue; // evita tentar carregar textura vazia
+		}
+
+		if (idToTextureID.find(id) == idToTextureID.end())
+		{
+			unsigned int textureID = loadTexture(texPath);
+			if (textureID == 0)
+			{
+				cout << "Falha ao carregar textura: " << texPath << endl;
+				return false;
+			}
+			idToTextureID[id] = textureID;
+		}
+
+		Cube cube;
+		cube.position = vec3(c["initial_position"][0], c["initial_position"][1], c["initial_position"][2]);
+		cube.rotation = vec3(0.0f);
+		cube.scale = vec3(1.0f);
+		cube.textureID = idToTextureID[id];
+
+		cubes.push_back(cube);
+	}
+	return true;
 }
